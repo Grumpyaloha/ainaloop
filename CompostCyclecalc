@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ʻĀinaLoop: Compost Recipe Calculator</title>
+    <!-- Chosen Palette: Earth & Harvest -->
+    <!-- Application Structure Plan: The SPA is designed as a functional, two-panel interactive tool. The left panel serves as the "Recipe Builder," where users add and manage ingredients. The right panel is the "Analysis Engine," providing real-time feedback on key compost metrics (C:N Ratio, Moisture, Density) and AI-powered suggestions. A key interaction is the ability to request AI-generated substitutes for any ingredient, making the tool more flexible and adaptable to real-world farm conditions. -->
+    <!-- Visualization & Content Choices: 
+        - Feedstock Data -> Searchable List/Modal -> Goal: Allow users to easily find and add materials to their recipe.
+        - Recipe State -> Dynamic List -> Goal: Provide a clear, editable view of the current compost mix. Each item includes a "substitute" button.
+        - Calculated C:N Ratio -> Gauge Chart (Chart.js) -> Goal: Give an instant, visual assessment of the most critical compost metric.
+        - Gemini API (Analysis) -> "AI Assistant" Text Box -> Goal: Transform the tool from a simple calculator into a smart assistant by providing nuanced advice on how to improve the overall recipe.
+        - Gemini API (Substitution) -> On-Demand Modal -> Goal: Solve the real-world problem of unavailable ingredients by providing intelligent, context-aware alternatives. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Lora:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        body {
+            background-color: #F4F1E8; /* Light beige canvas */
+            font-family: 'Inter', sans-serif;
+            color: #4C4A3A; /* Dark olive/brown */
+        }
+        h1, h2, h3, h4, .font-serif {
+            font-family: 'Lora', serif;
+        }
+        .text-accent-green { color: #5A7D3A; }
+        .bg-accent-green { background-color: #5A7D3A; }
+        .text-accent-brown { color: #8C5A3A; }
+        .bg-accent-brown { background-color: #8C5A3A; }
+        .bg-light-cream { background-color: #FDFBF5; }
+        
+        .custom-button {
+            transition: all 0.2s ease-in-out;
+        }
+        .custom-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 350px;
+            margin-left: auto;
+            margin-right: auto;
+            height: 180px;
+            max-height: 200px;
+        }
+        /* Loader for Gemini API call */
+        .loader {
+            border: 3px solid #E5E7EB;
+            border-top: 3px solid #5A7D3A;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="antialiased">
+
+    <div class="container mx-auto p-4 sm:p-6 lg:p-8 max-w-7xl">
+        <!-- Header -->
+        <header class="text-center mb-8">
+            <h1 class="text-4xl md:text-5xl font-bold text-accent-brown">Compost Recipe Calculator</h1>
+            <p class="mt-2 text-lg text-gray-600 max-w-3xl mx-auto">An expert system to help regenerative farmers design scientifically optimized compost.</p>
+        </header>
+
+        <!-- Main Application Layout -->
+        <main class="grid lg:grid-cols-2 gap-8">
+            
+            <!-- Left Panel: Recipe Builder -->
+            <div class="bg-light-cream p-6 rounded-lg shadow-md">
+                <h2 class="font-serif text-2xl font-bold mb-4">Recipe Builder</h2>
+                <div id="recipe-list" class="space-y-3 mb-4 min-h-[200px]">
+                    <!-- Recipe items will be injected here -->
+                    <p id="empty-recipe-message" class="text-gray-500 text-center py-16">Your recipe is empty. Add a material to begin.</p>
+                </div>
+                <div class="flex flex-wrap gap-4 pt-4 border-t border-gray-200">
+                    <button id="add-material-button" class="custom-button bg-accent-green text-white font-semibold py-2 px-5 rounded-md flex-grow sm:flex-grow-0">
+                        ＋ Add Material
+                    </button>
+                    <button id="clear-recipe-button" class="custom-button bg-gray-600 text-white font-semibold py-2 px-5 rounded-md flex-grow sm:flex-grow-0">
+                        Clear Recipe
+                    </button>
+                </div>
+            </div>
+
+            <!-- Right Panel: Recipe Analysis -->
+            <div class="bg-white p-6 rounded-lg shadow-lg">
+                <h2 class="font-serif text-2xl font-bold mb-4">Recipe Analysis</h2>
+                <div class="grid sm:grid-cols-2 gap-6">
+                    <!-- C:N Ratio Gauge -->
+                    <div class="text-center bg-light-cream p-4 rounded-lg">
+                        <h3 class="font-semibold text-lg mb-2">Carbon-to-Nitrogen (C:N) Ratio</h3>
+                        <div class="chart-container">
+                            <canvas id="cn-gauge-chart"></canvas>
+                        </div>
+                         <p id="cn-ratio-text" class="text-3xl font-bold mt-2">- : 1</p>
+                    </div>
+
+                    <!-- Other Metrics & AI Assistant -->
+                    <div class="space-y-4">
+                        <div class="bg-light-cream p-4 rounded-lg">
+                            <h4 class="font-semibold">Est. Moisture Content</h4>
+                            <p id="moisture-text" class="text-2xl font-bold text-accent-blue">- %</p>
+                        </div>
+                        <div class="bg-light-cream p-4 rounded-lg">
+                            <h4 class="font-semibold">Est. Bulk Density (lbs/cu.yd)</h4>
+                            <p id="density-text" class="text-2xl font-bold text-accent-blue">-</p>
+                        </div>
+                        <div class="bg-light-cream p-4 rounded-lg min-h-[120px]">
+                            <h4 class="font-semibold flex items-center gap-2">
+                                <span>🤖</span> AI Assistant
+                                <button id="ai-suggestion-button" title="Get AI Suggestion" class="ml-auto bg-accent-green text-white text-xs px-2 py-1 rounded-full hover:opacity-80">✨ GENERATE</button>
+                            </h4>
+                            <div id="ai-recommendation" class="text-sm text-gray-700 mt-2 italic">
+                                <!-- AI suggestion will appear here -->
+                                Add materials to get a suggestion.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Universal Modal (for Add Material and AI Responses) -->
+    <div id="universal-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 hidden">
+        <div id="modal-content-area" class="bg-white rounded-lg shadow-xl p-6 max-w-md w-full">
+            <!-- Modal content injected by JS -->
+        </div>
+    </div>
+
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+
+            // --- DATA STORE ---
+            const feedstockDatabase = [
+                { name: "Coffee Grounds", type: "Green", cnRatio: 20, moisture: 65, density: 1075 },
+                { name: "Wood Chips (Hardwood)", type: "Brown", cnRatio: 400, moisture: 40, density: 525 },
+                { name: "Sawdust", type: "Brown", cnRatio: 475, moisture: 40, density: 400 },
+                { name: "Grass Clippings (Fresh)", type: "Green", cnRatio: 17, moisture: 80, density: 230 },
+                { name: "Fruit Waste", type: "Green", cnRatio: 35, moisture: 85, density: 1242 },
+                { name: "Vegetable Scraps", type: "Green", cnRatio: 12, moisture: 85, density: 1242 },
+                { name: "Cardboard (Shredded)", type: "Brown", cnRatio: 560, moisture: 25, density: 215 },
+                { name: "Newspaper (Shredded)", type: "Brown", cnRatio: 170, moisture: 8, density: 215 },
+                { name: "Leaves (Dry)", type: "Brown", cnRatio: 60, moisture: 35, density: 200 },
+                { name: "Straw", type: "Brown", cnRatio: 80, moisture: 12, density: 225 },
+                { name: "Horse Manure (w/ bedding)", type: "Balanced", cnRatio: 30, moisture: 72, density: 1379 },
+                { name: "Poultry Manure (Laying Hens)", type: "Green", cnRatio: 6, moisture: 69, density: 1479 },
+                { name: "Cow Manure (Dairy)", type: "Green", cnRatio: 16, moisture: 81, density: 1500 },
+                { name: "Food Waste (General)", type: "Green", cnRatio: 15, moisture: 70, density: 1242 },
+                { name: "Green Waste (Yard Trimmings)", type: "Balanced", cnRatio: 30, moisture: 70, density: 800 },
+                { name: "Corn Cobs", type: "Brown", cnRatio: 98, moisture: 10, density: 300 },
+                { name: "Alfalfa Hay", type: "Green", cnRatio: 15, moisture: 9, density: 250 },
+                { name: "Seaweed", type: "Green", cnRatio: 19, moisture: 80, density: 1100 },
+                { name: "Blood Meal", type: "Green", cnRatio: 3, moisture: 10, density: 1000 },
+                { name: "Paper", type: "Brown", cnRatio: 170, moisture: 10, density: 225 },
+            ];
+
+            // --- APPLICATION STATE ---
+            let recipe = []; // Array of { material: {..}, weight: Number }
+            let cnGaugeChart;
+
+            // --- DOM ELEMENTS ---
+            const recipeListEl = document.getElementById('recipe-list');
+            const emptyMessageEl = document.getElementById('empty-recipe-message');
+            const addMaterialButton = document.getElementById('add-material-button');
+            const clearRecipeButton = document.getElementById('clear-recipe-button');
+            const modal = document.getElementById('universal-modal');
+            const modalContentArea = document.getElementById('modal-content-area');
+            const cnRatioText = document.getElementById('cn-ratio-text');
+            const moistureText = document.getElementById('moisture-text');
+            const densityText = document.getElementById('density-text');
+            const aiRecommendationEl = document.getElementById('ai-recommendation');
+            const aiSuggestionButton = document.getElementById('ai-suggestion-button');
+            
+            // --- CORE LOGIC ---
+            function calculateRecipe() {
+                if (recipe.length === 0) {
+                    updateAnalysisUI({ cnRatio: 0, moisture: 0, density: 0 });
+                    return;
+                }
+
+                let totalWeight = 0;
+                let totalCarbon = 0;
+                let totalNitrogen = 0;
+                let totalWaterWeight = 0;
+                let totalVolume = 0;
+
+                recipe.forEach(item => {
+                    const dryWeight = item.weight * (1 - (item.material.moisture / 100));
+                    const carbonWeight = dryWeight / (1 + (1 / item.material.cnRatio));
+                    const nitrogenWeight = carbonWeight / item.material.cnRatio;
+
+                    totalWeight += item.weight;
+                    totalCarbon += carbonWeight;
+                    totalNitrogen += nitrogenWeight;
+                    totalWaterWeight += item.weight * (item.material.moisture / 100);
+                    totalVolume += item.weight / item.material.density;
+                });
+
+                const finalCnRatio = totalNitrogen > 0 ? totalCarbon / totalNitrogen : 0;
+                const finalMoisture = totalWeight > 0 ? (totalWaterWeight / totalWeight) * 100 : 0;
+                const finalDensity = totalVolume > 0 ? totalWeight / totalVolume : 0;
+
+                updateAnalysisUI({
+                    cnRatio: finalCnRatio,
+                    moisture: finalMoisture,
+                    density: finalDensity
+                });
+            }
+
+            // --- UI/RENDERING ---
+            function renderRecipeList() {
+                if (recipe.length === 0) {
+                    recipeListEl.innerHTML = '';
+                    emptyMessageEl.classList.remove('hidden');
+                    return;
+                }
+                
+                emptyMessageEl.classList.add('hidden');
+                recipeListEl.innerHTML = recipe.map((item, index) => `
+                    <div class="flex items-center justify-between bg-white p-3 rounded-md shadow-sm">
+                        <div>
+                            <p class="font-semibold">${item.material.name}</p>
+                            <p class="text-sm text-gray-500">${item.weight} lbs</p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                             <button class="text-accent-green hover:opacity-70 font-bold text-2xl" title="Suggest Substitute" onclick="window.handleSuggestSubstitute('${item.material.name}', '${item.material.type}')">
+                                ✨
+                            </button>
+                            <button class="text-red-500 hover:text-red-700 font-bold text-2xl" title="Remove Item" onclick="window.removeRecipeItem(${index})">
+                                &times;
+                            </button>
+                        </div>
+                    </div>
+                `).join('');
+            }
+            
+            function updateAnalysisUI({ cnRatio, moisture, density }) {
+                cnRatioText.textContent = `${cnRatio.toFixed(1)} : 1`;
+                moistureText.textContent = `${moisture.toFixed(1)} %`;
+                densityText.textContent = `${density.toFixed(0)}`;
+                updateGauge(cnRatio);
+                
+                let recommendation = "Add materials to get a suggestion.";
+                if(recipe.length > 0) {
+                     if (cnRatio < 20) {
+                        recommendation = 'Ratio is too low (Nitrogen-rich). Add more "Browns" like wood chips, leaves, or cardboard.';
+                    } else if (cnRatio > 40) {
+                        recommendation = 'Ratio is too high (Carbon-rich). Add more "Greens" like food scraps or grass clippings.';
+                    } else {
+                        recommendation = 'Ratio is in the ideal range for hot composting! Looks good.';
+                    }
+                }
+                aiRecommendationEl.innerHTML = `<i>${recommendation}</i>`;
+            }
+            
+            function initializeGauge() {
+                const ctx = document.getElementById('cn-gauge-chart').getContext('2d');
+                cnGaugeChart = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Too Low', 'Ideal', 'Too High'],
+                        datasets: [{ data: [20, 20, 20], backgroundColor: ['#E57373', '#81C784', '#FFB74D'], circumference: 180, rotation: 270 }]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { tooltip: { enabled: false }, legend: { display: false } }, cutout: '60%' }
+                });
+            }
+
+            function updateGauge(cnRatio) {
+                if (!cnGaugeChart) return;
+                const value = Math.min(Math.max(cnRatio, 0), 60); 
+                const rotation = (value / 60) * 180;
+                cnGaugeChart.options.rotation = 270 + rotation;
+                cnGaugeChart.update();
+            }
+
+            function renderAddMaterialModal() {
+                 modalContentArea.innerHTML = `
+                    <h3 class="font-serif text-2xl font-bold mb-4">Add a Material</h3>
+                    <div class="space-y-4">
+                        <div>
+                            <label for="material-search" class="block text-sm font-semibold mb-1">Search Feedstock</label>
+                            <input type="text" id="material-search" placeholder="e.g., Coffee, Leaves..." class="w-full border border-gray-300 p-2 rounded-md">
+                        </div>
+                        <div id="material-options" class="max-h-60 overflow-y-auto border-t border-b py-2 space-y-1"></div>
+                        <div>
+                            <label for="material-weight" class="block text-sm font-semibold mb-1">Weight (lbs)</label>
+                            <input type="number" id="material-weight" placeholder="e.g., 50" class="w-full border border-gray-300 p-2 rounded-md">
+                        </div>
+                    </div>
+                    <div class="mt-6 flex justify-end gap-4">
+                        <button id="cancel-add-material" class="custom-button bg-gray-200 text-gray-700 font-semibold py-2 px-5 rounded-md">Cancel</button>
+                        <button id="confirm-add-material" class="custom-button bg-accent-green text-white font-semibold py-2 px-5 rounded-md">Add to Recipe</button>
+                    </div>`;
+                
+                document.getElementById('material-search').addEventListener('input', (e) => populateMaterialOptions(e.target.value));
+                document.getElementById('material-options').addEventListener('click', (e) => {
+                     const target = e.target.closest('[data-name]');
+                     if (target) {
+                        document.getElementById('material-search').value = target.dataset.name;
+                        document.getElementById('material-options').innerHTML = '';
+                     }
+                });
+                document.getElementById('cancel-add-material').addEventListener('click', () => modal.classList.add('hidden'));
+                document.getElementById('confirm-add-material').addEventListener('click', handleConfirmAddMaterial);
+                populateMaterialOptions();
+            }
+            
+            function populateMaterialOptions(filter = '') {
+                const container = document.getElementById('material-options');
+                if(!container) return;
+                container.innerHTML = feedstockDatabase
+                    .filter(material => material.name.toLowerCase().includes(filter.toLowerCase()))
+                    .map(material => `
+                        <div class="p-2 hover:bg-gray-100 cursor-pointer rounded-md" data-name="${material.name}">
+                            <p class="font-semibold">${material.name}</p>
+                            <p class="text-xs text-gray-500">Type: ${material.type} | C:N: ~${material.cnRatio}:1</p>
+                        </div>
+                    `).join('');
+            }
+            
+            // --- EVENT HANDLERS ---
+            window.removeRecipeItem = (index) => {
+                recipe.splice(index, 1);
+                renderRecipeList();
+                calculateRecipe();
+            };
+            
+            addMaterialButton.addEventListener('click', () => {
+                renderAddMaterialModal();
+                modal.classList.remove('hidden');
+                document.getElementById('material-search').focus();
+            });
+
+            function handleConfirmAddMaterial() {
+                const materialName = document.getElementById('material-search').value;
+                const weight = parseFloat(document.getElementById('material-weight').value);
+                const material = feedstockDatabase.find(m => m.name === materialName);
+
+                if (material && weight > 0) {
+                    recipe.push({ material, weight });
+                    renderRecipeList();
+                    calculateRecipe();
+                    modal.classList.add('hidden');
+                } else {
+                    alert('Please select a valid material and enter a positive weight.');
+                }
+            }
+            
+            clearRecipeButton.addEventListener('click', () => {
+                recipe = [];
+                renderRecipeList();
+                calculateRecipe();
+            });
+            
+            modal.addEventListener('click', (e) => {
+                if(e.target === modal) modal.classList.add('hidden');
+            });
+            
+            aiSuggestionButton.addEventListener('click', async () => {
+                if (recipe.length === 0) {
+                    aiRecommendationEl.innerHTML = "<i>Please add some materials to your recipe first!</i>";
+                    return;
+                }
+                
+                aiRecommendationEl.innerHTML = '<div class="loader mx-auto"></div>';
+                
+                const recipeString = recipe.map(item => `${item.weight} lbs of ${item.material.name}`).join(', ');
+                const prompt = `Act as a master composter. My current compost recipe is: ${recipeString}. The calculated C:N ratio is ${cnRatioText.textContent.split(' ')[0]}. Provide a short, conversational, and encouraging paragraph with actionable advice on how to improve it, or confirm that it's good.`;
+
+                const response = await callGemini(prompt);
+                aiRecommendationEl.innerHTML = `<i>${response}</i>`;
+            });
+            
+            window.handleSuggestSubstitute = async (materialName, materialType) => {
+                const title = `Substitutes for ${materialName}`;
+                const prompt = `I am making compost on a farm in Oʻahu, Hawaiʻi. I need a good substitute for "${materialName}", which is a "${materialType}" material. Please suggest two other common, locally available materials that could serve the same purpose. For each suggestion, briefly explain why it's a good alternative.`;
+                
+                modalContentArea.innerHTML = `
+                    <h3 class="font-serif text-2xl font-bold mb-4">${title}</h3>
+                    <div class="loader mx-auto"></div>
+                    <div class="mt-6 flex justify-end">
+                        <button id="close-sub-modal" class="custom-button bg-gray-200 text-gray-700 font-semibold py-2 px-5 rounded-md">Close</button>
+                    </div>
+                `;
+                modal.classList.remove('hidden');
+                document.getElementById('close-sub-modal').addEventListener('click', () => modal.classList.add('hidden'));
+
+                const response = await callGemini(prompt);
+                const responseHtml = response.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br><br>');
+                
+                document.querySelector('#modal-content-area div.loader').outerHTML = `<p>${responseHtml}</p>`;
+            };
+
+            // --- GEMINI API CALL ---
+            async function callGemini(prompt) {
+                const apiKey = ""; // Keep this blank
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+                    });
+                    if (!response.ok) throw new Error(`API Error: ${response.status}`);
+                    const result = await response.json();
+                    if (result.candidates && result.candidates[0].content.parts) {
+                        return result.candidates[0].content.parts[0].text;
+                    }
+                    return "Could not get a suggestion at this time.";
+                } catch (error) {
+                    console.error("Gemini API Error:", error);
+                    return "Error fetching suggestion. Please check the console.";
+                }
+            }
+
+
+            // --- INITIALIZATION ---
+            initializeGauge();
+            renderRecipeList();
+            calculateRecipe();
+        });
+    </script>
+</body>
+</html>
